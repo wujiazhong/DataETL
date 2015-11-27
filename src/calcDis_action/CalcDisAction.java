@@ -109,7 +109,9 @@ public class CalcDisAction {
 		}
 		
 		String insert_sql = createColStr();
-		
+		final int MAX_ROW = 500; 
+		int BATCH_NUM = 1;
+		final int uniDataList_size = uniDataList.size();
 		//TO DO
 		Statement stmt = DB.getStatement(conn);
 		//PreparedStatement pstmt = DB.prepare(conn, insert_sql);
@@ -117,7 +119,7 @@ public class CalcDisAction {
 		printSysTime();
 		try{
 			conn.setAutoCommit(true);
-			for(int i=0; i<uniDataList.size(); i++){
+			for(int i=0; i<uniDataList_size; i++){
 				ArrayList<DataObj> dataList = uniDataList.get(i);
 				print("i="+i);
 				print("start to get data for diagram: "+dataList.get(0).getDiag_id());
@@ -164,12 +166,20 @@ public class CalcDisAction {
 				}
 				insert_sql += val_sql.substring(0, val_sql.length()-1)+"),";
 				
+				if(i==MAX_ROW*BATCH_NUM || i==uniDataList_size-1){
+					insert_sql = insert_sql.substring(0, insert_sql.length()-1);
+					stmt.addBatch(insert_sql);
+					insert_sql = createColStr();
+					print("insert "+BATCH_NUM+"th batch");
+					BATCH_NUM++;
+				}
 				//pstmt.addBatch();
 			}
-			insert_sql = insert_sql.substring(0, insert_sql.length()-1);
-			print(insert_sql);
-			stmt.executeUpdate(insert_sql);
-			
+			//stmt.executeUpdate(insert_sql);
+			int[] counts = stmt.executeBatch();
+			if(counts!=null){
+				print("totally insert "+counts.length+" batch");
+			}
 			print("complete to insert data: ");
 			printSysTime();
 			conn.commit();
@@ -258,7 +268,7 @@ public class CalcDisAction {
 		print("start to get diagram list");
 		try{
 			//String getDiaList_sql = "select distinct DIAGRAM_ID from DB2INST1.T_INDICATOR  order by 1 asc fetch first 3 row only";
-			String getDiaList_sql = "select distinct DIAGRAM_ID, COLLECT_DATETIME from DB2INST1.T_INDICATOR order by 2 desc fetch first 10000 row only";
+			String getDiaList_sql = "select distinct DIAGRAM_ID, COLLECT_DATETIME from DB2INST1.T_INDICATOR order by 2 desc fetch first 5000 row only";
 			res = DB.getResultSet(stm,getDiaList_sql);
 			
 			while(res.next()){
