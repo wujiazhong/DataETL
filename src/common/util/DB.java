@@ -1,4 +1,4 @@
-package db;
+package common.util;
 
 import java.sql.*;
 
@@ -31,7 +31,7 @@ public class DB {
 		PreparedStatement pstmt = null; 
 		try {
 			if(conn != null) {
-				pstmt = conn.prepareStatement(sql);
+				pstmt = conn.prepareStatement(sql,ResultSet.TYPE_SCROLL_INSENSITIVE,ResultSet.CONCUR_UPDATABLE);
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -89,6 +89,17 @@ public class DB {
 			if(stmt != null) {
 				stmt.close();
 				stmt = null;
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		}
+	}
+	
+	public static void close(PreparedStatement pstmt) {
+		try {
+			if(pstmt != null) {
+				pstmt.close();
+				pstmt = null;
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();

@@ -1,9 +1,10 @@
-package etl_action;
+package etl.action;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
-import db.DB;
+
+import common.util.DB;
 
 public class ETLAction {
 	public static void insertDataToETL() throws ClassNotFoundException{
