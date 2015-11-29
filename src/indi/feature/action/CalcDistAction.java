@@ -20,8 +20,8 @@ import interfaces.getDataObjListAction;
 
 public class CalcDistAction implements getDataObjListAction{
 	private Connection conn = null;
-	private final static int threadNum = 32;
-	private final static int p_Num = 100;
+	private final static int threadNum = 32;                //task num
+	private final static int p_Num = 100;                   //divide the whole stream into p_num area
 	private final static int entry_Num = 100;
 	private final static int diff_Load_Satrt_Index = 1;
 	private final static int dn_Start_Index = 101;
@@ -34,6 +34,35 @@ public class CalcDistAction implements getDataObjListAction{
 		conn = DB.getConnection();
 		setSrcDiagList(getDiagList(srcTable));
 		setTarDiagList(getDiagList(tarTable));
+	}
+	
+	/**
+	 * Get diagram list in table
+	 * @param tableName
+	 * @return diagram list
+	 */
+	private ArrayList<String> getDiagList(final String tableName) {
+		print("start to get diagram list from "+tableName);
+		Statement stm = DB.getStatement(conn);
+		ArrayList<String> diagList = new ArrayList<String>();
+
+		ResultSet res = null;
+		try{
+			//String getDiaList_sql = "select distinct DIAGRAM_ID from DB2INST1.T_INDICATOR order by 1 asc fetch first 100 row only";
+			String getDiaList_sql = "select distinct DIAGRAM_ID from " + tableName + " order by 1 asc";
+			res = DB.getResultSet(stm,getDiaList_sql);
+			
+			while(res.next()){
+				diagList.add(res.getString("DIAGRAM_ID"));
+			}
+		} catch (SQLException e) {
+			e.printStackTrace();
+		} finally{
+			DB.close(res);
+			DB.close(stm);
+		}
+		print("Get dia list from "+tableName+". It contains "+diagList.size()+" items.");		
+		return diagList;
 	}
 	
 	/**
@@ -65,6 +94,7 @@ public class CalcDistAction implements getDataObjListAction{
 			while(res.next()){
 				int diagID = res.getInt("DIAGRAM_ID");
 				double loadValue = res.getDouble("LOAD");
+				double shift = res.getDouble("SHIFT");
 				isCurLoadPositive = loadValue>=0?true:false;
 				
 				if(diaNum==0)
@@ -87,10 +117,10 @@ public class CalcDistAction implements getDataObjListAction{
 					continue;
 				
 				isValidDataSet = isCurLoadPositive;
-				
 				if(isValidDataSet){
-					dataList.add(new DataObj(String.valueOf(diagID),res.getInt("INDICATOR_ID"), res.getDouble("SHIFT"), loadValue));
+					dataList.add(new DataObj(String.valueOf(diagID),res.getInt("INDICATOR_ID"), shift, loadValue));
 				} else {
+					print("Failure in Diagram ("+diagID+"): Load at shift("+shift+") is negative.");
 					dataList.clear();
 				}
 				
@@ -111,7 +141,7 @@ public class CalcDistAction implements getDataObjListAction{
 		DB.close(conn);
 	}
 	
-	public static String createColStr(){
+	private String createColStr(){
 		String insert_sql = "insert into DB2INST1.T_INDI_FEATURE (DIAGRAM_ID,";
 		for(int i=diff_Load_Satrt_Index; i<dn_Start_Index+entry_Num;i++){
 			insert_sql += "F_"+String.valueOf(i)+",";
@@ -182,10 +212,17 @@ public class CalcDistAction implements getDataObjListAction{
 				double curDist = 0.0;
 				
 				int sortedtype = getShiftVariedType(dataList);
-				if (sortedtype == -1) {
-					normalizDataList(dataList);
-				} else if (sortedtype == 0) {
+				if (sortedtype == 0) {
+					print("Failure in Diagram ("+dataList.get(0)+"): Oscillation in shift order.");
 					continue;
+				} else {
+					if (sortedtype == -1) {
+						normalizeDataList(dataList);
+					} 
+					
+					if (isStreamReversed(dataList)){
+						swap(dataList);
+					}
 				}
 				
 				List<String> record = new ArrayList<String>();
@@ -200,6 +237,7 @@ public class CalcDistAction implements getDataObjListAction{
 					
 					if(dataPosList == null || dataPosList.isEmpty()){
 						getValidShiftPoint = false;
+						print("Failure in Diagram ("+dataList.get(0)+"): Fail to interpolate the point at "+curDist);
 						break;
 					}
 					
@@ -243,6 +281,13 @@ public class CalcDistAction implements getDataObjListAction{
 		}			
 	}
 	
+	/**
+	 * 
+	 * @author wujz
+	 * @param dataList
+	 * @return Shift varied type: 1 is normal; -1 is reversed; 0 is abnormal
+	 * @throws Exception
+	 */
 	private int getShiftVariedType(ArrayList<DataObj> dataList) throws Exception{
 		if(dataList==null || dataList.isEmpty()){
 			throw new Exception("dataList is null or empty!");
@@ -314,7 +359,14 @@ public class CalcDistAction implements getDataObjListAction{
 
 		return flag;
 	}
-
+	
+	/**
+	 * Get max or min point of the stream
+	 * @param dataList
+	 * @param flag
+	 * @return
+	 * @throws Exception
+	 */
 	private int getExtremeShiftPos(ArrayList<DataObj> dataList, final String flag) throws Exception{
 		if(dataList==null || dataList.isEmpty()){
 			throw new Exception("dataList is null or empty!");
@@ -339,7 +391,13 @@ public class CalcDistAction implements getDataObjListAction{
 		return pos;
 	}
 	
-	private void normalizDataList(ArrayList<DataObj> dataList) throws Exception{
+	/**
+	 * For shift of data that is not aligned normally (first increase then decrease), use this method to realign the shift in data order
+	 * @author wujz
+	 * @param dataList
+	 * @throws Exception
+	 */
+	private void normalizeDataList(ArrayList<DataObj> dataList) throws Exception{
 		if(dataList==null || dataList.isEmpty()){
 			throw new Exception("dataList is null or empty!");
 		}
@@ -348,30 +406,57 @@ public class CalcDistAction implements getDataObjListAction{
 		int halfSize = dataSize/2;
 		int quaterSize = halfSize/2;
 		DataObj tempObj = null;
-		double firstHalfMeanLoad = 0.0;
+		
 		for(int i=0; i<quaterSize; i++){
 			
 			tempObj = dataList.get(halfSize-i-1).clone();
 			dataList.set(halfSize-i-1, dataList.get(i).clone());
 			dataList.set(i, tempObj);
-			firstHalfMeanLoad += dataList.get(i).getLoad()+dataList.get(halfSize-i-1).getLoad();
 		}	
 		
-		double secHalfMeanLoad = 0.0;
 		for(int j=halfSize;j<=halfSize+quaterSize;j++){			
 			int indx = j-halfSize;
 			
 			tempObj = dataList.get(dataSize-indx-1).clone();
 			dataList.set(dataSize-indx-1, dataList.get(j).clone());
 			dataList.set(j, tempObj);
-			secHalfMeanLoad += dataList.get(j).getLoad()+dataList.get(dataSize-indx-1).getLoad();
 		}
-		
-		if(firstHalfMeanLoad<secHalfMeanLoad){
-			swap(dataList);
-		}
-
 	}
+	
+	/**
+	 * Judge if the load of first half stream is less second one.
+	 * @param dataList
+	 * @return
+	 * @throws Exception
+	 */
+	private boolean isStreamReversed(ArrayList<DataObj> dataList) throws Exception{
+		boolean isStreamReversed = false;
+		if(dataList==null || dataList.isEmpty()){
+			throw new Exception("dataList is null or empty!");
+		}
+		int dataSize = dataList.size();
+		int halfSize = dataSize/2;
+		double firstHalfMeanSum = 0.0;
+		for(int i=0; i<halfSize; i++)
+			firstHalfMeanSum += dataList.get(i).getLoad();
+		
+		double secHalfMeanSum = 0.0;
+		for(int i=halfSize;i<=dataSize;i++)
+			secHalfMeanSum += dataList.get(i).getLoad();
+		
+		if(firstHalfMeanSum < secHalfMeanSum)
+			isStreamReversed = true;
+		
+		return isStreamReversed;
+	}
+	
+	/**
+	 * Swap load if the stream is upside down.
+	 * @author wujz
+	 * @param dataList
+	 * @return
+	 * @throws Exception
+	 */
 	private void swap(ArrayList<DataObj> dataList) throws Exception{
 		if(dataList==null || dataList.isEmpty()){
 			throw new Exception("dataList is null or empty!");
@@ -387,6 +472,12 @@ public class CalcDistAction implements getDataObjListAction{
 		}
 	}
 	
+	/**
+	 * Calculate max dist in the stream
+	 * @param dataList
+	 * @return
+	 * @throws Exception
+	 */
 	private double calcMaxDistance(ArrayList<DataObj> dataList) throws Exception{
 		if(dataList==null || dataList.isEmpty()){
 			throw new Exception("dataList is null or empty!");
@@ -403,6 +494,13 @@ public class CalcDistAction implements getDataObjListAction{
 		return (max-min);
 	}
 	
+	/**
+	 * Insert points into stream
+	 * @param dataList
+	 * @param dist
+	 * @return shift list
+	 * @throws Exception
+	 */
 	private List<Integer> getNearestPoint(ArrayList<DataObj> dataList, final double dist) throws Exception{
 		if(dataList==null || dataList.isEmpty()){
 			throw new Exception("dataList is null or empty!");
@@ -456,6 +554,10 @@ public class CalcDistAction implements getDataObjListAction{
 		return dataPosList;
 	}
 	
+	/**
+	 * clear target table
+	 * @author wujz
+	 */
 	private void clearFeatureTable(){
 		String del_sql = "delete from DB2INST1.T_INDI_FEATURE where DIAGRAM_ID between ? and ?";
 		
@@ -502,35 +604,11 @@ public class CalcDistAction implements getDataObjListAction{
 		return String.valueOf(df.format(new Date()));
 	}
 	
-	private ArrayList<String> getDiagList(final String tableName) {
-		print("start to get diagram list from "+tableName);
-		Statement stm = DB.getStatement(conn);
-		ArrayList<String> diagList = new ArrayList<String>();
-
-		ResultSet res = null;
-		try{
-			//String getDiaList_sql = "select distinct DIAGRAM_ID from DB2INST1.T_INDICATOR order by 1 asc fetch first 100 row only";
-			String getDiaList_sql = "select distinct DIAGRAM_ID from " + tableName + " order by 1 asc";
-			res = DB.getResultSet(stm,getDiaList_sql);
-			
-			while(res.next()){
-				diagList.add(res.getString("DIAGRAM_ID"));
-			}
-		} catch (SQLException e) {
-			e.printStackTrace();
-		} finally{
-			DB.close(res);
-			DB.close(stm);
-		}
-		print("Get dia list from "+tableName+". It contains "+diagList.size()+" items.");		
-		return diagList;
-	}
-	
 	public ArrayList<String> getSrcDiagList() {
 		return srcDiagList;
 	}
 
-	public void setSrcDiagList(ArrayList<String> srcDiagList) {
+	private void setSrcDiagList(ArrayList<String> srcDiagList) {
 		this.srcDiagList = srcDiagList;
 	}
 	
@@ -538,7 +616,7 @@ public class CalcDistAction implements getDataObjListAction{
 		return tarDiagList;
 	}
 
-	public void setTarDiagList(ArrayList<String> tarDiagList) {
+	private void setTarDiagList(ArrayList<String> tarDiagList) {
 		this.tarDiagList = tarDiagList;
 	}
 	
