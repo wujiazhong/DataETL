@@ -29,8 +29,14 @@ public class CalcDistAction implements getDataObjListAction{
 	private ArrayList<String> tarDiagList = null;
 	private final String srcTable = "DB2INST1.T_INDICATOR";
 	private final String tarTable = "DB2INST1.T_INDI_FEATURE";
-	@SuppressWarnings("unused")
+	// invalid type: 
+	// 1. zero load
+	// 2. disorder of shift
+	// 3. fail to find shift point
 	private int zeroLoadNum = 0;
+	private int disorderShiftNum = 0;
+	private int failureInsertShiftPointNum = 0;
+	private int validRecNum = 0;
 	
 	public CalcDistAction() {
 		conn = DB.getConnection();
@@ -137,10 +143,21 @@ public class CalcDistAction implements getDataObjListAction{
 		
 		return uniDataList;
 	}	
-
+	
+	private String getActionSummary(){
+		String msg = "";
+		msg += "Inserted data number: " + getValidRecNum();
+		msg += "Zero load data number: " + getZeroLoadNum();
+		msg += "Disorder shift data number: " + getDisorderShiftNum();
+		msg += "Failure in get shift point of data: " + getFailureInsertShiftPointNum();
+		return msg;
+	}
+	
 	public void closeCalcDisAction(){
-		print("close connection to db2");
+		print("Close connection to db2");
 		DB.close(conn);
+		print(getActionSummary());
+		print("All action completed!");
 	}
 	
 	private String createColStr(){
@@ -186,11 +203,6 @@ public class CalcDistAction implements getDataObjListAction{
 	        } 
 
 			Thread.sleep(1000);
-			
-/*			for(int i = 0; i < threadNum; i++){
-				ArrayList<ArrayList<DataObj>> uniDataList = t[i].getUniDataList();
-				insertData(uniDataList, i);
-			}*/
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -216,7 +228,7 @@ public class CalcDistAction implements getDataObjListAction{
 				
 				double[] halfLoadList = getHalfLoadList(dataList);
 				if (isLoadZero(halfLoadList)){
-					zeroLoadNum++;
+					setZeroLoadNum(getZeroLoadNum() + 1);
 					isValidDataSet = false;
 				}
 
@@ -224,6 +236,7 @@ public class CalcDistAction implements getDataObjListAction{
 				if(isValidDataSet){
 					if (sortedtype == 0) {
 						print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Oscillation in shift order.");
+						setDisorderShiftNum(getDisorderShiftNum() + 1);
 						isValidDataSet = false;
 					} else {					
 						if (sortedtype == -1) {
@@ -245,6 +258,7 @@ public class CalcDistAction implements getDataObjListAction{
 						
 						if(dataPosList == null || dataPosList.isEmpty()){
 							isValidDataSet = false;
+							setFailureInsertShiftPointNum(getFailureInsertShiftPointNum() + 1);
 							print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Fail to interpolate the point at "+curDist+". Div is "+div);
 							break;
 						}
@@ -268,6 +282,7 @@ public class CalcDistAction implements getDataObjListAction{
 						}
 						insert_sql += val_sql.substring(0, val_sql.length()-1)+"),";
 						validDataListNumInCurBatch++;
+						setValidRecNum(getValidRecNum() + 1);
 					}
 				}
 
@@ -656,6 +671,40 @@ public class CalcDistAction implements getDataObjListAction{
 		this.tarDiagList = tarDiagList;
 	}
 	
+
+	public int getZeroLoadNum() {
+		return zeroLoadNum;
+	}
+
+	private void setZeroLoadNum(int zeroLoadNum) {
+		this.zeroLoadNum = zeroLoadNum;
+	}
+	
+
+	public int getValidRecNum() {
+		return validRecNum;
+	}
+
+	private void setValidRecNum(int validRecNum) {
+		this.validRecNum = validRecNum;
+	}
+
+	public int getDisorderShiftNum() {
+		return disorderShiftNum;
+	}
+
+	private void setDisorderShiftNum(int disorderShiftNum) {
+		this.disorderShiftNum = disorderShiftNum;
+	}
+	
+	public int getFailureInsertShiftPointNum() {
+		return failureInsertShiftPointNum;
+	}
+
+	private void setFailureInsertShiftPointNum(int failureInsertShiftPointNum) {
+		this.failureInsertShiftPointNum = failureInsertShiftPointNum;
+	}
+	
 	public static void main(String[] args){
 		CalcDistAction dataObj =  new CalcDistAction();
 		try{
@@ -666,5 +715,4 @@ public class CalcDistAction implements getDataObjListAction{
 		}
 		dataObj.closeCalcDisAction();
 	}
-
 }
