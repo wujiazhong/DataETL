@@ -213,7 +213,7 @@ public class CalcDistAction implements getDataObjListAction{
 				
 				int sortedtype = getShiftVariedType(dataList);
 				if (sortedtype == 0) {
-					print("Failure in Diagram ("+dataList.get(0)+"): Oscillation in shift order.");
+					print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Oscillation in shift order.");
 					continue;
 				} else {
 					if (sortedtype == -1) {
@@ -237,7 +237,7 @@ public class CalcDistAction implements getDataObjListAction{
 					
 					if(dataPosList == null || dataPosList.isEmpty()){
 						getValidShiftPoint = false;
-						print("Failure in Diagram ("+dataList.get(0)+"): Fail to interpolate the point at "+curDist);
+						print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Fail to interpolate the point at "+curDist+". Div is "+div);
 						break;
 					}
 					
@@ -408,7 +408,6 @@ public class CalcDistAction implements getDataObjListAction{
 		DataObj tempObj = null;
 		
 		for(int i=0; i<quaterSize; i++){
-			
 			tempObj = dataList.get(halfSize-i-1).clone();
 			dataList.set(halfSize-i-1, dataList.get(i).clone());
 			dataList.set(i, tempObj);
@@ -416,7 +415,6 @@ public class CalcDistAction implements getDataObjListAction{
 		
 		for(int j=halfSize;j<=halfSize+quaterSize;j++){			
 			int indx = j-halfSize;
-			
 			tempObj = dataList.get(dataSize-indx-1).clone();
 			dataList.set(dataSize-indx-1, dataList.get(j).clone());
 			dataList.set(j, tempObj);
@@ -441,7 +439,7 @@ public class CalcDistAction implements getDataObjListAction{
 			firstHalfMeanSum += dataList.get(i).getLoad();
 		
 		double secHalfMeanSum = 0.0;
-		for(int i=halfSize;i<=dataSize;i++)
+		for(int i=halfSize;i<dataSize;i++)
 			secHalfMeanSum += dataList.get(i).getLoad();
 		
 		if(firstHalfMeanSum < secHalfMeanSum)
