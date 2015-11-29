@@ -26,6 +26,7 @@ public class ETLThread extends Thread{
 	public void run(){ 
 		try{
 			setUniDataList(action.getDataObjList(startDiaID, endDiaID));
+			action.insertData(getUniDataList(), getTaskIndex());
 			if(getUniDataList()!=null && !getUniDataList().isEmpty()){
 				this.setGetDataSuccess(true);
 				Thread.sleep(1000*1);

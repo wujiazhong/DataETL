@@ -29,6 +29,8 @@ public class CalcDistAction implements getDataObjListAction{
 	private ArrayList<String> tarDiagList = null;
 	private final String srcTable = "DB2INST1.T_INDICATOR";
 	private final String tarTable = "DB2INST1.T_INDI_FEATURE";
+	@SuppressWarnings("unused")
+	private int zeroLoadNum = 0;
 	
 	public CalcDistAction() {
 		conn = DB.getConnection();
@@ -82,28 +84,24 @@ public class CalcDistAction implements getDataObjListAction{
 			pstmt.setInt(1, startDiaID);
 			pstmt.setInt(2, endDiaID);
 			res = pstmt.executeQuery();
-			print("Start to get diagram from "+startDiaID+" to "+(endDiaID - 1));
+			print("Start to get diagram from "+startDiaID+" to "+endDiaID);
 
 			int lastDiagID = -1;
 			ArrayList<DataObj> dataList = null;
 			
 			boolean isValidDataSet = true;
 			boolean isCurLoadPositive = true;
-			int diaNum = endDiaID - startDiaID + 1;
 			
 			while(res.next()){
 				int diagID = res.getInt("DIAGRAM_ID");
 				double loadValue = res.getDouble("LOAD");
 				double shift = res.getDouble("SHIFT");
 				isCurLoadPositive = loadValue>=0?true:false;
-				
-				if(diaNum==0)
-					break;
 					
 				// if it is a new diagram id
 				if(lastDiagID != diagID){
 					lastDiagID = diagID;
-					diaNum--;
+
 					if(dataList!=null && !dataList.isEmpty()){
 						uniDataList.add(dataList);
 					} 
@@ -122,9 +120,13 @@ public class CalcDistAction implements getDataObjListAction{
 				} else {
 					print("Failure in Diagram ("+diagID+"): Load at shift("+shift+") is negative.");
 					dataList.clear();
-				}
-				
+				}	
 			}
+			// add the data list
+			if(dataList!=null && !dataList.isEmpty()){
+				uniDataList.add(dataList);
+			}
+			
 			print("Complete getting diagram from "+startDiaID+" to "+(endDiaID - 1));
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -166,7 +168,7 @@ public class CalcDistAction implements getDataObjListAction{
 				int startDiagID = Integer.valueOf(getSrcDiagList().get(startIndex));
 				
 				int endIndex = (startIndex + diagNumPerThread - 1) >= diagListSize ? (diagListSize-1) : (startIndex + diagNumPerThread - 1);
-				int endDiagID = Integer.valueOf(getSrcDiagList().get(endIndex)) + 1;
+				int endDiagID = Integer.valueOf(getSrcDiagList().get(endIndex));
 				
 				t[i] = new ETLThread(this, startDiagID, endDiagID, i);
 				threadPool.execute(t[i]);
@@ -185,16 +187,16 @@ public class CalcDistAction implements getDataObjListAction{
 
 			Thread.sleep(1000);
 			
-			for(int i = 0; i < threadNum; i++){
+/*			for(int i = 0; i < threadNum; i++){
 				ArrayList<ArrayList<DataObj>> uniDataList = t[i].getUniDataList();
 				insertData(uniDataList, i);
-			}
+			}*/
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
 	}
 	
-	private void insertData(ArrayList<ArrayList<DataObj>> uniDataList, final int threadIndex){
+	public void insertData(ArrayList<ArrayList<DataObj>> uniDataList, final int threadIndex){
 		String insert_sql = createColStr();
 		final int MAX_ROW = 1000; 
 		int BATCH_NUM = 1;
@@ -204,68 +206,78 @@ public class CalcDistAction implements getDataObjListAction{
 		print("start to insert data in task "+threadIndex);
 		try{
 			conn.setAutoCommit(true);
+			int validDataListNumInCurBatch = 0;
 			for(int i=0; i<uniDataList_size; i++){
 				ArrayList<DataObj> dataList = uniDataList.get(i);
-				
+				boolean isValidDataSet = true; 
 				//divide the distance into p_Num area, start from 1st point to calculate the diff load
 				double div = calcMaxDistance(dataList)/p_Num;
 				double curDist = 0.0;
 				
+				double[] halfLoadList = getHalfLoadList(dataList);
+				if (isLoadZero(halfLoadList)){
+					zeroLoadNum++;
+					isValidDataSet = false;
+				}
+
 				int sortedtype = getShiftVariedType(dataList);
-				if (sortedtype == 0) {
-					print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Oscillation in shift order.");
-					continue;
-				} else {
-					if (sortedtype == -1) {
-						normalizeDataList(dataList);
-					} 
-					
-					if (isStreamReversed(dataList)){
-						swap(dataList);
-					}
-				}
-				
-				List<String> record = new ArrayList<String>();
-				List<String> dnstreamList = new ArrayList<String>();
-				record.add(dataList.get(0).getDiag_id());
-				
-				boolean getValidShiftPoint = true;
-				for(int j=0; j<p_Num; j++){					
-					//leave out the point whose dist=0
-					curDist = div*(j+1);
-					List<Integer> dataPosList = new ArrayList<Integer>(getNearestPoint(dataList,curDist));
-					
-					if(dataPosList == null || dataPosList.isEmpty()){
-						getValidShiftPoint = false;
-						print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Fail to interpolate the point at "+curDist+". Div is "+div);
-						break;
+				if(isValidDataSet){
+					if (sortedtype == 0) {
+						print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Oscillation in shift order.");
+						isValidDataSet = false;
+					} else {					
+						if (sortedtype == -1) {
+							normalizeDataList(dataList);
+						} 
+	
+						if (isShiftReversed(halfLoadList)){
+							swap(dataList);
+						}
 					}
 					
-					double upLoad = (dataList.get(dataPosList.get(0)).getLoad() + dataList.get(dataPosList.get(1)).getLoad())/2;  
-					double dnLoad = (dataList.get(dataPosList.get(2)).getLoad() + dataList.get(dataPosList.get(3)).getLoad())/2;  
-					dnstreamList.add(String.valueOf(dnLoad));
-					double diffLoad = upLoad - dnLoad;
-					record.add(String.valueOf(diffLoad));
+					List<String> record = new ArrayList<String>();
+					List<String> dnstreamList = new ArrayList<String>();
+					record.add(dataList.get(0).getDiag_id());
+					for(int j=0; j<p_Num; j++){					
+						//leave out the point whose dist=0
+						curDist = div*(j+1);
+						List<Integer> dataPosList = new ArrayList<Integer>(getNearestPoint(dataList,curDist));
+						
+						if(dataPosList == null || dataPosList.isEmpty()){
+							isValidDataSet = false;
+							print("Failure in Diagram ("+dataList.get(0).getDiag_id()+"): Fail to interpolate the point at "+curDist+". Div is "+div);
+							break;
+						}
+						
+						double upLoad = (dataList.get(dataPosList.get(0)).getLoad() + dataList.get(dataPosList.get(1)).getLoad())/2;  
+						double dnLoad = (dataList.get(dataPosList.get(2)).getLoad() + dataList.get(dataPosList.get(3)).getLoad())/2;  
+						dnstreamList.add(String.valueOf(dnLoad));
+						double diffLoad = upLoad - dnLoad;
+						record.add(String.valueOf(diffLoad));
+					}
+					
+					if(isValidDataSet){
+						String val_sql = "(";
+						val_sql += record.get(0)+",";
+						int record_size = record.size();
+						for(int k=2; k<=record_size; k++){
+							val_sql += record.get(k-1)+",";
+						}
+						for(int t=record_size+1; t<=record_size+dnstreamList.size(); t++){
+							val_sql += dnstreamList.get(t-record_size-1)+",";
+						}
+						insert_sql += val_sql.substring(0, val_sql.length()-1)+"),";
+						validDataListNumInCurBatch++;
+					}
 				}
-				if(!getValidShiftPoint) continue;
-				
-				String val_sql = "(";
-				val_sql += record.get(0)+",";
-				int record_size = record.size();
-				for(int k=2; k<=record_size; k++){
-					val_sql += record.get(k-1)+",";
-				}
-				for(int t=record_size+1; t<=record_size+dnstreamList.size(); t++){
-					val_sql += dnstreamList.get(t-record_size-1)+",";
-				}
-				insert_sql += val_sql.substring(0, val_sql.length()-1)+"),";
-				
-				if(i==MAX_ROW*BATCH_NUM || i==uniDataList_size-1){
+
+				if((i == MAX_ROW*BATCH_NUM || i == uniDataList_size-1) && validDataListNumInCurBatch != 0){
 					insert_sql = insert_sql.substring(0, insert_sql.length()-1);
 					stmt.addBatch(insert_sql);
 					insert_sql = createColStr();
-					print("insert "+BATCH_NUM+"th batch");
+					print("insert "+BATCH_NUM+"th batch in task "+threadIndex);
 					BATCH_NUM++;
+					validDataListNumInCurBatch = 0;
 				}
 			}
 			int[] counts = stmt.executeBatch();
@@ -427,25 +439,51 @@ public class CalcDistAction implements getDataObjListAction{
 	 * @return
 	 * @throws Exception
 	 */
-	private boolean isStreamReversed(ArrayList<DataObj> dataList) throws Exception{
+	private boolean isShiftReversed(double[] halfLoadList) throws Exception{
 		boolean isStreamReversed = false;
-		if(dataList==null || dataList.isEmpty()){
+		if(halfLoadList==null || halfLoadList.length != 2){
 			throw new Exception("dataList is null or empty!");
 		}
+		if(halfLoadList[0] < halfLoadList[1])
+			isStreamReversed = true;
+		return isStreamReversed;
+	}
+	
+	/**
+	 * Check if load is zero
+	 * @author wujz
+	 * @param halfLoadList
+	 * @return 
+	 * @throws Exception
+	 */
+	private boolean isLoadZero(double[] halfLoadList) throws Exception{
+		boolean isZeroLoad = false;
+		if(halfLoadList == null || halfLoadList.length != 2){
+			throw new Exception("dataList is null or empty!");
+		}
+		if(halfLoadList[0] == 0.0 || halfLoadList[1] == 0.0)
+			isZeroLoad = true;
+		return isZeroLoad;
+	}
+	
+	private double[] getHalfLoadList(ArrayList<DataObj> dataList) throws Exception{
+		double[] halfLoadList = {0,0};
+		if(dataList == null || dataList.isEmpty()){
+			throw new Exception("dataList is null or empty!");
+		}
+		
 		int dataSize = dataList.size();
 		int halfSize = dataSize/2;
 		double firstHalfMeanSum = 0.0;
 		for(int i=0; i<halfSize; i++)
 			firstHalfMeanSum += dataList.get(i).getLoad();
+		halfLoadList[0] = firstHalfMeanSum;
 		
 		double secHalfMeanSum = 0.0;
 		for(int i=halfSize;i<dataSize;i++)
 			secHalfMeanSum += dataList.get(i).getLoad();
-		
-		if(firstHalfMeanSum < secHalfMeanSum)
-			isStreamReversed = true;
-		
-		return isStreamReversed;
+		halfLoadList[1] = secHalfMeanSum;
+		return halfLoadList;
 	}
 	
 	/**
